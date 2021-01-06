@@ -17,6 +17,8 @@ struct PaUtilRingBuffer;
 
 namespace CC {
 
+class ICCExtenedAudioObserver;
+
 const uint32_t N_REC_SAMPLES_PER_SEC = 48000;
 const uint32_t N_PLAY_SAMPLES_PER_SEC = 48000;
 
@@ -61,7 +63,8 @@ class AudioDeviceMac {
 
     int32_t playoutChannels();
     int32_t playoutSampleRate();
-
+    void setObserver(ICCExtenedAudioObserver *observer);
+    void setDataCallback(std::function<void (uint8_t *, int32_t, int32_t, int32_t)> callback);
 
   // Retrieve the currently utilized audio layer
   virtual int32_t ActiveAudioLayer(
@@ -338,6 +341,11 @@ class AudioDeviceMac {
   // Typing detection
   // 0x5c is key "9", after that comes function keys.
   bool prev_key_state_[0x5d];
+
+
+  std::function<void (uint8_t *, int32_t, int32_t, int32_t)> m_audio_data_callback=nullptr;
+  ICCExtenedAudioObserver *m_observer;
+
 };
 
 }  // namespace CC

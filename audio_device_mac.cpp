@@ -21,7 +21,7 @@ extern "C"
 
 #include "audio_device_mac.h"
 #include <memory>
-
+#include "ICCExtenedAudio.h"
 
 #include <ApplicationServices/ApplicationServices.h>
 #include <libkern/OSAtomic.h>  // OSAtomicCompareAndSwap()
@@ -52,6 +52,14 @@ namespace CC {
     }                                                                  \
   } while (0)
 
+
+#define OBSERVER_LOG(str)                                       \
+    do{                                                         \
+        if(m_observer){                                         \
+            m_observer->onCaptureAudioLog(str);                 \
+        }                                                       \
+    }while(0)
+
 enum { MaxNumberDevices = 64 };
 
 void AudioDeviceMac::AtomicSet32(int32_t* theValue, int32_t newValue) {
@@ -71,6 +79,7 @@ int32_t AudioDeviceMac::AtomicGet32(int32_t* theValue) {
     }
   }
 }
+
 
 // CoreAudio errors are best interpreted as four character strings.
 //void AudioDeviceMac::logCAMsg(const rtc::LoggingSeverity sev,
@@ -162,7 +171,7 @@ AudioDeviceMac::AudioDeviceMac()
 
 AudioDeviceMac::~AudioDeviceMac() {
 //  RTC_LOG(LS_INFO) << __FUNCTION__ << " destroyed";
-
+    OBSERVER_LOG("AudioDeviceMac destroyed.");
   if (!_isShutDown) {
     Terminate();
   }
@@ -194,11 +203,13 @@ AudioDeviceMac::~AudioDeviceMac() {
   kernErr = semaphore_destroy(mach_task_self(), _renderSemaphore);
   if (kernErr != KERN_SUCCESS) {
 //    RTC_LOG(LS_ERROR) << "semaphore_destroy() error: " << kernErr;
+      OBSERVER_LOG("semaphore_destroy() error:"+std::to_string(kernErr));
   }
 
   kernErr = semaphore_destroy(mach_task_self(), _captureSemaphore);
   if (kernErr != KERN_SUCCESS) {
 //    RTC_LOG(LS_ERROR) << "semaphore_destroy() error: " << kernErr;
+      OBSERVER_LOG("semaphore_destroy() error:"+std::to_string(kernErr));
   }
 
 }
@@ -211,6 +222,16 @@ int32_t AudioDeviceMac::playoutChannels()
 int32_t AudioDeviceMac::playoutSampleRate()
 {
     return N_PLAY_SAMPLES_PER_SEC;
+}
+
+void AudioDeviceMac::setObserver(ICCExtenedAudioObserver *observer)
+{
+    m_observer=observer;
+}
+
+void AudioDeviceMac::setDataCallback(std::function<void (uint8_t *, int32_t, int32_t, int32_t)> callback)
+{
+    m_audio_data_callback = callback;
 }
 
 // ============================================================================
@@ -261,6 +282,7 @@ bool AudioDeviceMac::Init() {
     bufSize = PaUtil_InitializeRingBuffer(
         _paRenderBuffer, sizeof(SInt16), _renderBufSizeSamples, _renderBufData);
     if (bufSize == -1) {
+        OBSERVER_LOG("PaUtil_InitializeRingBuffer() error");
 //      RTC_LOG(LS_ERROR) << "PaUtil_InitializeRingBuffer() error";
       return false;
     }
@@ -282,6 +304,7 @@ bool AudioDeviceMac::Init() {
         PaUtil_InitializeRingBuffer(_paCaptureBuffer, sizeof(Float32),
                                     _captureBufSizeSamples, _captureBufData);
     if (bufSize == -1) {
+        OBSERVER_LOG("PaUtil_InitializeRingBuffer() error");
 //      RTC_LOG(LS_ERROR) << "PaUtil_InitializeRingBuffer() error";
       return false;
     }
@@ -291,6 +314,7 @@ bool AudioDeviceMac::Init() {
   kernErr = semaphore_create(mach_task_self(), &_renderSemaphore,
                              SYNC_POLICY_FIFO, 0);
   if (kernErr != KERN_SUCCESS) {
+      OBSERVER_LOG("semaphore_create() error:"+std::to_string(kernErr));
 //    RTC_LOG(LS_ERROR) << "semaphore_create() error: " << kernErr;
     return false;
   }
@@ -298,6 +322,7 @@ bool AudioDeviceMac::Init() {
   kernErr = semaphore_create(mach_task_self(), &_captureSemaphore,
                              SYNC_POLICY_FIFO, 0);
   if (kernErr != KERN_SUCCESS) {
+      OBSERVER_LOG("semaphore_create() error:"+std::to_string(kernErr));
 //    RTC_LOG(LS_ERROR) << "semaphore_create() error: " << kernErr;
     return false;
   }
@@ -314,6 +339,7 @@ bool AudioDeviceMac::Init() {
   int aoerr = AudioObjectSetPropertyData(
       kAudioObjectSystemObject, &propertyAddress, 0, NULL, size, &runLoop);
   if (aoerr != noErr) {
+      OBSERVER_LOG("Error in AudioObjectSetPropertyData:"+std::string((const char*)&aoerr));
 //    RTC_LOG(LS_ERROR) << "Error in AudioObjectSetPropertyData: "
 //                      << (const char*)&aoerr;
     return false;
@@ -333,8 +359,10 @@ bool AudioDeviceMac::Init() {
 
   int intErr = sysctlbyname("hw.model", buf, &length, NULL, 0);
   if (intErr != 0) {
+      OBSERVER_LOG("Error in sysctlbyname():"+std::to_string(err));
 //    RTC_LOG(LS_ERROR) << "Error in sysctlbyname(): " << err;
   } else {
+      OBSERVER_LOG("Hardware model:"+std::string(buf));
 //    RTC_LOG(LS_VERBOSE) << "Hardware model: " << buf;
     if (strncmp(buf, "MacBookPro", 10) == 0) {
       _macBookPro = true;
@@ -352,12 +380,12 @@ int32_t AudioDeviceMac::Terminate() {
   }
 
   if (_recording) {
-//    RTC_LOG(LS_ERROR) << "Recording must be stopped";
+      OBSERVER_LOG("Recording must be stopped");
     return -1;
   }
 
   if (_playing) {
-//    RTC_LOG(LS_ERROR) << "Playback must be stopped";
+      OBSERVER_LOG("Playback must be stopped");
     return -1;
   }
 
@@ -376,8 +404,7 @@ int32_t AudioDeviceMac::Terminate() {
 
   err = AudioHardwareUnload();
   if (err != noErr) {
-//    logCAMsg(rtc::LS_ERROR, "Error in AudioHardwareUnload()",
-//             (const char*)&err);
+      OBSERVER_LOG("Error in AudioHardwareUnload() "+std::string((const char*)&err));
     retVal = -1;
   }
 
@@ -816,12 +843,10 @@ int32_t AudioDeviceMac::SetPlayoutDevice(uint16_t index) {
   AudioDeviceID playDevices[MaxNumberDevices];
   uint32_t nDevices = GetNumberDevices(kAudioDevicePropertyScopeOutput,
                                        playDevices, MaxNumberDevices);
-//  RTC_LOG(LS_VERBOSE) << "number of available waveform-audio output devices is "
-//                      << nDevices;
+  OBSERVER_LOG("number of available waveform-audio output devices is  "+std::to_string(nDevices));
 
   if (index > (nDevices - 1)) {
-//    RTC_LOG(LS_ERROR) << "device index is out of range [0," << (nDevices - 1)
-//                      << "]";
+        OBSERVER_LOG("device index is out of range 0-"+std::to_string(nDevices-1));
     return -1;
   }
 
@@ -882,12 +907,10 @@ int32_t AudioDeviceMac::SetRecordingDevice(uint16_t index) {
   AudioDeviceID recDevices[MaxNumberDevices];
   uint32_t nDevices = GetNumberDevices(kAudioDevicePropertyScopeInput,
                                        recDevices, MaxNumberDevices);
-//  RTC_LOG(LS_VERBOSE) << "number of available waveform-audio input devices is "
-//                      << nDevices;
+  OBSERVER_LOG("number of available waveform-audio input devices is "+std::to_string(nDevices));
 
   if (index > (nDevices - 1)) {
-//    RTC_LOG(LS_ERROR) << "device index is out of range [0," << (nDevices - 1)
-//                      << "]";
+      OBSERVER_LOG("device index is out of range 0-"+std::to_string(nDevices-1));
     return -1;
   }
 
@@ -970,7 +993,7 @@ int32_t AudioDeviceMac::InitPlayout() {
     // one or two devices (_twoDevices)
     bool available = false;
     if (MicrophoneIsAvailable(available) == -1) {
-//      RTC_LOG(LS_WARNING) << "MicrophoneIsAvailable() failed";
+        OBSERVER_LOG("MicrophoneIsAvailable() failed");
     }
   }
 
@@ -1001,10 +1024,9 @@ int32_t AudioDeviceMac::InitPlayout() {
 
       if (dataSource == 'ispk') {
         _macBookProPanRight = true;
-//        RTC_LOG(LS_VERBOSE)
-//            << "MacBook Pro using internal speakers; stereo panning right";
+        OBSERVER_LOG("MacBook Pro using internal speakers; stereo panning right");
       } else {
-//        RTC_LOG(LS_VERBOSE) << "MacBook Pro not using internal speakers";
+          OBSERVER_LOG("MacBook Pro not using internal speakers");
       }
 
       // Add a listener to determine if the status changes.
@@ -1021,44 +1043,36 @@ int32_t AudioDeviceMac::InitPlayout() {
       _outputDeviceID, &propertyAddress, 0, NULL, &size, &_outStreamFormat));
 
   if (_outStreamFormat.mFormatID != kAudioFormatLinearPCM) {
+
 //    logCAMsg(rtc::LS_ERROR, "Unacceptable output stream format -> mFormatID",
 //             (const char*)&_outStreamFormat.mFormatID);
     return -1;
   }
 
   if (_outStreamFormat.mChannelsPerFrame > N_DEVICE_CHANNELS) {
-//    RTC_LOG(LS_ERROR)
-//        << "Too many channels on output device (mChannelsPerFrame = "
-//        << _outStreamFormat.mChannelsPerFrame << ")";
+      OBSERVER_LOG("Too many channels on output device mChannelsPerFrame = "+std::to_string(_outStreamFormat.mChannelsPerFrame));
     return -1;
   }
 
   if (_outStreamFormat.mFormatFlags & kAudioFormatFlagIsNonInterleaved) {
-//    RTC_LOG(LS_ERROR) << "Non-interleaved audio data is not supported."
-//                      << "AudioHardware streams should not have this format.";
+      OBSERVER_LOG("Non-interleaved audio data is not supported.AudioHardware streams should not have this format.");
     return -1;
   }
-
-//  RTC_LOG(LS_VERBOSE) << "Ouput stream format:";
-//  RTC_LOG(LS_VERBOSE) << "mSampleRate = " << _outStreamFormat.mSampleRate
-//                      << ", mChannelsPerFrame = "
-//                      << _outStreamFormat.mChannelsPerFrame;
-//  RTC_LOG(LS_VERBOSE) << "mBytesPerPacket = "
-//                      << _outStreamFormat.mBytesPerPacket
-//                      << ", mFramesPerPacket = "
-//                      << _outStreamFormat.mFramesPerPacket;
-//  RTC_LOG(LS_VERBOSE) << "mBytesPerFrame = " << _outStreamFormat.mBytesPerFrame
-//                      << ", mBitsPerChannel = "
-//                      << _outStreamFormat.mBitsPerChannel;
-//  RTC_LOG(LS_VERBOSE) << "mFormatFlags = " << _outStreamFormat.mFormatFlags;
-//  logCAMsg(rtc::LS_VERBOSE, "mFormatID",
-//           (const char*)&_outStreamFormat.mFormatID);
+    OBSERVER_LOG("Ouput stream format:");
+    OBSERVER_LOG("mSampleRate = "+std::to_string(_outStreamFormat.mSampleRate));
+    OBSERVER_LOG("mChannelsPerFrame = "+std::to_string(_outStreamFormat.mChannelsPerFrame));
+    OBSERVER_LOG("mBytesPerPacket = "+std::to_string(_outStreamFormat.mBytesPerPacket));
+    OBSERVER_LOG("mFramesPerPacket = "+std::to_string(_outStreamFormat.mFramesPerPacket));
+    OBSERVER_LOG("mBytesPerFrame = "+std::to_string(_outStreamFormat.mBytesPerFrame));
+    OBSERVER_LOG("mBitsPerChannel = "+std::to_string(_outStreamFormat.mBitsPerChannel));
+    OBSERVER_LOG("mFormatFlags = "+std::to_string(_outStreamFormat.mFormatFlags));
+    OBSERVER_LOG("mBitsPerChannel = "+std::to_string(_outStreamFormat.mBitsPerChannel));
 
   // Our preferred format to work with.
   if (_outStreamFormat.mChannelsPerFrame < 2) {
     // Disable stereo playout when we only have one channel on the device.
     _playChannels = 1;
-//    RTC_LOG(LS_VERBOSE) << "Stereo playout unavailable on this device";
+    OBSERVER_LOG("Stereo playout unavailable on this device");
   }
   WEBRTC_CA_RETURN_ON_ERR(SetDesiredPlayoutFormat());
 
@@ -1083,7 +1097,7 @@ int32_t AudioDeviceMac::InitPlayout() {
 }
 
 int32_t AudioDeviceMac::InitRecording() {
-//  RTC_LOG(LS_INFO) << "InitRecording";
+    OBSERVER_LOG("InitRecording");
 //  rtc::CritScope lock(&_critSect);
 
   if (_recording) {
@@ -1100,7 +1114,7 @@ int32_t AudioDeviceMac::InitRecording() {
 
   // Initialize the microphone (devices might have been added or removed)
   if (InitMicrophone() == -1) {
-//    RTC_LOG(LS_WARNING) << "InitMicrophone() failed";
+      OBSERVER_LOG("InitMicrophone() failed");
   }
 
   if (!SpeakerIsInitialized()) {
@@ -1108,7 +1122,7 @@ int32_t AudioDeviceMac::InitRecording() {
     // one or two devices (_twoDevices)
     bool available = false;
     if (SpeakerIsAvailable(available) == -1) {
-//      RTC_LOG(LS_WARNING) << "SpeakerIsAvailable() failed";
+        OBSERVER_LOG("SpeakerIsAvailable() failed");
     }
   }
 
@@ -1131,15 +1145,12 @@ int32_t AudioDeviceMac::InitRecording() {
       _inputDeviceID, &propertyAddress, 0, NULL, &size, &_inStreamFormat));
 
   if (_inStreamFormat.mFormatID != kAudioFormatLinearPCM) {
-//    logCAMsg(rtc::LS_ERROR, "Unacceptable input stream format -> mFormatID",
-//             (const char*)&_inStreamFormat.mFormatID);
+      OBSERVER_LOG("Unacceptable input stream format -> mFormatID");
     return -1;
   }
 
   if (_inStreamFormat.mChannelsPerFrame > N_DEVICE_CHANNELS) {
-//    RTC_LOG(LS_ERROR)
-//        << "Too many channels on input device (mChannelsPerFrame = "
-//        << _inStreamFormat.mChannelsPerFrame << ")";
+      OBSERVER_LOG("Too many channels on input device (mChannelsPerFrame ="+std::to_string(_inStreamFormat.mChannelsPerFrame));
     return -1;
   }
 
@@ -1147,25 +1158,20 @@ int32_t AudioDeviceMac::InitRecording() {
                                     _inStreamFormat.mSampleRate / 100 *
                                     N_BLOCKS_IO;
   if (io_block_size_samples > _captureBufSizeSamples) {
-//    RTC_LOG(LS_ERROR) << "Input IO block size (" << io_block_size_samples
-//                      << ") is larger than ring buffer ("
-//                      << _captureBufSizeSamples << ")";
+      OBSERVER_LOG("Input IO block size ("+std::to_string(io_block_size_samples)+") is larger than ring buffer ("+std::to_string(_captureBufSizeSamples)+")");
     return -1;
   }
 
-//  RTC_LOG(LS_VERBOSE) << "Input stream format:";
-//  RTC_LOG(LS_VERBOSE) << "mSampleRate = " << _inStreamFormat.mSampleRate
-//                      << ", mChannelsPerFrame = "
-//                      << _inStreamFormat.mChannelsPerFrame;
-//  RTC_LOG(LS_VERBOSE) << "mBytesPerPacket = " << _inStreamFormat.mBytesPerPacket
-//                      << ", mFramesPerPacket = "
-//                      << _inStreamFormat.mFramesPerPacket;
-//  RTC_LOG(LS_VERBOSE) << "mBytesPerFrame = " << _inStreamFormat.mBytesPerFrame
-//                      << ", mBitsPerChannel = "
-//                      << _inStreamFormat.mBitsPerChannel;
-//  RTC_LOG(LS_VERBOSE) << "mFormatFlags = " << _inStreamFormat.mFormatFlags;
-//  logCAMsg(rtc::LS_VERBOSE, "mFormatID",
-//           (const char*)&_inStreamFormat.mFormatID);
+  OBSERVER_LOG("Input stream format:");
+  OBSERVER_LOG("mSampleRate = "+std::to_string(_inStreamFormat.mSampleRate));
+  OBSERVER_LOG("mChannelsPerFrame = "+std::to_string(_inStreamFormat.mChannelsPerFrame));
+  OBSERVER_LOG("mBytesPerPacket = "+std::to_string(_inStreamFormat.mBytesPerPacket));
+  OBSERVER_LOG("mFramesPerPacket = "+std::to_string(_inStreamFormat.mFramesPerPacket));
+  OBSERVER_LOG("mBytesPerFrame = "+std::to_string(_inStreamFormat.mBytesPerFrame));
+  OBSERVER_LOG("mBitsPerChannel = "+std::to_string(_inStreamFormat.mBitsPerChannel));
+  OBSERVER_LOG("mFormatFlags = "+std::to_string(_inStreamFormat.mFormatFlags));
+  OBSERVER_LOG("mBitsPerChannel = "+std::to_string(_inStreamFormat.mBitsPerChannel));
+
 
   // Our preferred format to work with
   if (_inStreamFormat.mChannelsPerFrame >= 2 && (_recChannels == 2)) {
@@ -1174,7 +1180,8 @@ int32_t AudioDeviceMac::InitRecording() {
     // Disable stereo recording when we only have one channel on the device.
     _inDesiredFormat.mChannelsPerFrame = 1;
     _recChannels = 1;
-//    RTC_LOG(LS_VERBOSE) << "Stereo recording unavailable on this device";
+    OBSERVER_LOG("Stereo recording unavailable on this device");
+
   }
 
 //  if (_ptrAudioBuffer) {
