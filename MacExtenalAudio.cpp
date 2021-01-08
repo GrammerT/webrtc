@@ -106,7 +106,7 @@ bool MacExtenalAudio::coreAuduioInit()
 
     AudioComponent component = AudioComponentFindNext(NULL, &desc);
     if (!component) {
-       m_obsever->onCaptureAudioLog("Audio Component Find Next error :"+std::to_string(stat));
+       m_obsever->onCaptureAudioLog("Audio Component Find Next error.");
        return false;
     }
 
@@ -371,6 +371,45 @@ bool MacExtenalAudio::formatIsValid(uint32_t format_flags, uint32_t bits)
 
 //    return AUDIO_FORMAT_UNKNOWN;
     return true;
+}
+
+bool MacExtenalAudio::haveValidOutputDevice()
+{
+    AudioObjectPropertyAddress addr = {
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
+
+    UInt32        size = 0;
+    UInt32        count;
+    OSStatus      stat;
+    AudioDeviceID *ids;
+
+    stat = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr,
+            0, NULL, &size);
+    if(!checkStatus(stat))
+    {
+        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
+        return false;
+    }
+    ids   = (AudioDeviceID*)malloc(size);
+    count = size / sizeof(AudioDeviceID);
+
+    stat = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr,
+            0, NULL, &size, ids);
+    if(!checkStatus(stat))
+    {
+        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
+        return false;
+    }
+
+    for (UInt32 i = 0; i < count; i++)
+    {
+        if (!coreaudio_enum_device(proc, param, ids[i]))
+            break;
+    }
+
 }
 
 //void MacExtenalAudio::audioObjectRemovePerprotyListener(AudioObjectPropertyAddress *addr, AURenderCallbackStruct clallback)

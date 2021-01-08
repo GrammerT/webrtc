@@ -56,10 +56,9 @@ public:
     void resetCoreAudioUnitCallback();
 
     bool enableIOProperty(bool input,bool enable);
-
-
-
     bool formatIsValid(uint32_t format_flags,uint32_t bits);
+
+    bool haveValidOutputDevice();
 
 private:
     ICCExtenedAudioObserver *m_obsever=nullptr;
