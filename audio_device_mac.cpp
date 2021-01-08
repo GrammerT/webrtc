@@ -160,8 +160,8 @@ AudioDeviceMac::AudioDeviceMac()
       _captureBufSizeSamples(0),
       _renderBufSizeSamples(0),
       prev_key_state_() {
-//  RTC_LOG(LS_INFO) << __FUNCTION__ << " created";
 
+    OBSERVER_LOG("AudioDeviceMac created.");
   memset(_renderConvertData, 0, sizeof(_renderConvertData));
   memset(&_outStreamFormat, 0, sizeof(AudioStreamBasicDescription));
   memset(&_outDesiredFormat, 0, sizeof(AudioStreamBasicDescription));
@@ -170,8 +170,7 @@ AudioDeviceMac::AudioDeviceMac()
 }
 
 AudioDeviceMac::~AudioDeviceMac() {
-//  RTC_LOG(LS_INFO) << __FUNCTION__ << " destroyed";
-    OBSERVER_LOG("AudioDeviceMac destroyed.");
+   OBSERVER_LOG("AudioDeviceMac destroyed.");
   if (!_isShutDown) {
     Terminate();
   }
@@ -202,13 +201,11 @@ AudioDeviceMac::~AudioDeviceMac() {
   kern_return_t kernErr = KERN_SUCCESS;
   kernErr = semaphore_destroy(mach_task_self(), _renderSemaphore);
   if (kernErr != KERN_SUCCESS) {
-//    RTC_LOG(LS_ERROR) << "semaphore_destroy() error: " << kernErr;
-      OBSERVER_LOG("semaphore_destroy() error:"+std::to_string(kernErr));
+      OBSERVER_LOG("semaphore_destroy() error: "+std::to_string(kernErr));
   }
 
   kernErr = semaphore_destroy(mach_task_self(), _captureSemaphore);
   if (kernErr != KERN_SUCCESS) {
-//    RTC_LOG(LS_ERROR) << "semaphore_destroy() error: " << kernErr;
       OBSERVER_LOG("semaphore_destroy() error:"+std::to_string(kernErr));
   }
 
@@ -305,7 +302,6 @@ bool AudioDeviceMac::Init() {
                                     _captureBufSizeSamples, _captureBufData);
     if (bufSize == -1) {
         OBSERVER_LOG("PaUtil_InitializeRingBuffer() error");
-//      RTC_LOG(LS_ERROR) << "PaUtil_InitializeRingBuffer() error";
       return false;
     }
   }
@@ -315,7 +311,6 @@ bool AudioDeviceMac::Init() {
                              SYNC_POLICY_FIFO, 0);
   if (kernErr != KERN_SUCCESS) {
       OBSERVER_LOG("semaphore_create() error:"+std::to_string(kernErr));
-//    RTC_LOG(LS_ERROR) << "semaphore_create() error: " << kernErr;
     return false;
   }
 
@@ -323,7 +318,6 @@ bool AudioDeviceMac::Init() {
                              SYNC_POLICY_FIFO, 0);
   if (kernErr != KERN_SUCCESS) {
       OBSERVER_LOG("semaphore_create() error:"+std::to_string(kernErr));
-//    RTC_LOG(LS_ERROR) << "semaphore_create() error: " << kernErr;
     return false;
   }
 
@@ -340,8 +334,6 @@ bool AudioDeviceMac::Init() {
       kAudioObjectSystemObject, &propertyAddress, 0, NULL, size, &runLoop);
   if (aoerr != noErr) {
       OBSERVER_LOG("Error in AudioObjectSetPropertyData:"+std::string((const char*)&aoerr));
-//    RTC_LOG(LS_ERROR) << "Error in AudioObjectSetPropertyData: "
-//                      << (const char*)&aoerr;
     return false;
   }
 
@@ -360,10 +352,8 @@ bool AudioDeviceMac::Init() {
   int intErr = sysctlbyname("hw.model", buf, &length, NULL, 0);
   if (intErr != 0) {
       OBSERVER_LOG("Error in sysctlbyname():"+std::to_string(err));
-//    RTC_LOG(LS_ERROR) << "Error in sysctlbyname(): " << err;
   } else {
       OBSERVER_LOG("Hardware model:"+std::string(buf));
-//    RTC_LOG(LS_VERBOSE) << "Hardware model: " << buf;
     if (strncmp(buf, "MacBookPro", 10) == 0) {
       _macBookPro = true;
     }
@@ -968,7 +958,7 @@ int32_t AudioDeviceMac::RecordingIsAvailable(bool& available) {
 }
 
 int32_t AudioDeviceMac::InitPlayout() {
-//  RTC_LOG(LS_INFO) << "InitPlayout";
+    OBSERVER_LOG("InitPlayout");
 //  rtc::CritScope lock(&_critSect);
 
   if (_playing) {
@@ -985,7 +975,7 @@ int32_t AudioDeviceMac::InitPlayout() {
 
   // Initialize the speaker (devices might have been added or removed)
   if (InitSpeaker() == -1) {
-//    RTC_LOG(LS_WARNING) << "InitSpeaker() failed";
+      OBSERVER_LOG("InitSpeaker() failed");
   }
 
   if (!MicrophoneIsInitialized()) {
@@ -1429,7 +1419,7 @@ bool AudioDeviceMac::PlayoutIsInitialized() const {
 }
 
 int32_t AudioDeviceMac::StartPlayout() {
-//  RTC_LOG(LS_INFO) << "StartPlayout";
+    OBSERVER_LOG("StartPlayout ");
 //  rtc::CritScope lock(&_critSect);
 
   if (!_playIsInitialized) {
@@ -2228,11 +2218,10 @@ OSStatus AudioDeviceMac::implDeviceIOProc(const AudioBufferList* inputData,
   if (err != noErr) {
     if (err == 1) {
       // This is our own error.
-//      RTC_LOG(LS_ERROR) << "Error in AudioConverterFillComplexBuffer()";
+        OBSERVER_LOG("Error in AudioConverterFillComplexBuffer(1)");
       return 1;
     } else {
-//      logCAMsg(rtc::LS_ERROR, "Error in AudioConverterFillComplexBuffer()",
-//               (const char*)&err);
+        OBSERVER_LOG("Error in AudioConverterFillComplexBuffer(2)");
       return 1;
     }
   }
@@ -2269,8 +2258,8 @@ OSStatus AudioDeviceMac::implOutConverterProc(UInt32* numberDataPackets,
 
   kern_return_t kernErr = semaphore_signal_all(_renderSemaphore);
   if (kernErr != KERN_SUCCESS) {
-//    RTC_LOG(LS_ERROR) << "semaphore_signal_all() error: " << kernErr;
-    return 1;
+      OBSERVER_LOG("semaphore_signal_all() error: "+std::to_string(kernErr));
+       return 1;
   }
 
   return 0;
@@ -2383,9 +2372,7 @@ void AudioDeviceMac::RunRender(void* ptrThis) {
 bool AudioDeviceMac::RenderWorkerThread() {
   PaRingBufferSize numSamples =
       ENGINE_PLAY_BUF_SIZE_IN_SAMPLES * _outDesiredFormat.mChannelsPerFrame;
-  while (PaUtil_GetRingBufferWriteAvailable(_paRenderBuffer) -
-             _renderDelayOffsetSamples <
-         numSamples) {
+  while (PaUtil_GetRingBufferWriteAvailable(_paRenderBuffer) - _renderDelayOffsetSamples < numSamples) {
     mach_timespec_t timeout;
     timeout.tv_sec = 0;
     timeout.tv_nsec = TIMER_PERIOD_MS;

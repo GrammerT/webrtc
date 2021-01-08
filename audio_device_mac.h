@@ -4,6 +4,11 @@
 #include <memory>
 #include "audio_mixer_manager_mac.h"
 
+#include <AudioToolbox/AUAudioUnit.h>
+#include <AudioToolbox/AudioOutputUnit.h>
+#include <AudioToolbox/AudioToolbox.h>
+
+
 #include <AudioToolbox/AudioConverter.h>
 #include <CoreAudio/CoreAudio.h>
 #include <mach/semaphore.h>
