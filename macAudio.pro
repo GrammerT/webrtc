@@ -17,7 +17,7 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
     ICCExtenedAudio.cpp \
-    MacExtenalAudio.cpp \
+    MacExtenalAudio.mm \
     audio_device_mac.cpp \
     audio_mixer_manager_mac.cc \
     main.cpp \
@@ -38,7 +38,8 @@ FORMS += \
 
 LIBS += -framework AudioToolBox
 LIBS += -framework CoreAudio
-
+LIBS += -framework CoreFoundation
+LIBS += -framework Foundation
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin

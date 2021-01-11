@@ -1,7 +1,10 @@
 #include "MacExtenalAudio.h"
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreAudio/AudioHardware.h>
-namespace CC {
+#include <QString>
+
+
+namespace CC{
 #define OBSERVER_LOG(str)                                       \
     do{                                                         \
         if(m_obsever){                                         \
@@ -94,10 +97,47 @@ OSStatus MacExtenalAudio::notification_callback(AudioObjectID id, UInt32 num_add
 
 OSStatus MacExtenalAudio::inputCallback(void *data, AudioUnitRenderActionFlags *action_flags, const AudioTimeStamp *ts_data, UInt32 bus_num, UInt32 frames, AudioBufferList *ignored_buffers)
 {
+    MacExtenalAudio *pThis = (MacExtenalAudio *)data;
+    OSStatus stat;
+//    struct obs_source_audio audio;
 
+    stat = AudioUnitRender(pThis->m_audio_unit, action_flags, ts_data, bus_num, frames,
+            pThis->m_tempBufferList);
+
+    if(!checkStatus(stat))
+    {
+
+        return noErr;
+    }
+
+//    if (!ca_success(stat, ca, "input_callback", "audio retrieval")){
+//        unsigned long cur_ms = clock();
+//        if (!ca->prev_update_ts || cur_ms - ca->prev_update_ts > 5000000) {
+//            blog(LOG_WARNING, "Prepare reset the coreaudio module.");
+//            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+//                blog(LOG_WARNING, "Reset the coreaudio module.");
+//                obs_data_t * settings = obs_source_get_settings(ca->source);
+//                coreaudio_update(ca, settings);
+//                obs_data_release(settings);
+//            });
+//            ca->prev_update_ts = cur_ms;
+//        }
+//        return noErr;
+//    }
+
+//    for (UInt32 i = 0; i < pThis->m_tempBufferList->mNumberBuffers; i++)
+//        audio.data[i] = pThis->m_tempBufferList->mBuffers[i].mData;
+
+//    audio.frames          = frames;
+//    audio.speakers        = ca->speakers;
+//    audio.format          = ca->format;
+//    audio.samples_per_sec = ca->sample_rate;
+//    audio.timestamp       = ts_data->mHostTime;
+
+    return noErr;
 }
 
-bool MacExtenalAudio::coreAuduioInit()
+bool MacExtenalAudio::coreAudioInit()
 {
     AudioComponentDescription desc = {
         .componentType    = kAudioUnitType_Output,
@@ -117,7 +157,7 @@ bool MacExtenalAudio::coreAuduioInit()
         return false;
     }
 
-    m_init = true;
+
     return true;
 }
 
@@ -140,6 +180,7 @@ bool MacExtenalAudio::coreAudioStart()
     {
         m_obsever->onCaptureAudioLog("auduio out put unit start error :"+std::to_string(stat));
     }
+    m_active = true;
     return m_active;
 }
 
@@ -165,7 +206,11 @@ bool MacExtenalAudio::initAudioUnitFormat()
         m_obsever->onCaptureAudioLog("auduio out put unit get stream format error :"+std::to_string(stat));
         return false;
     }
-    if (desc.mChannelsPerFrame > 8) {
+//    if (desc.mChannelsPerFrame > 8)
+    {
+
+            desc.mSampleRate=48000;
+
             desc.mChannelsPerFrame = 2;
             desc.mBytesPerFrame = 2 * desc.mBitsPerChannel / 8;
             desc.mBytesPerPacket =
@@ -373,7 +418,7 @@ bool MacExtenalAudio::formatIsValid(uint32_t format_flags, uint32_t bits)
     return true;
 }
 
-bool MacExtenalAudio::haveValidOutputDevice()
+void MacExtenalAudio::enumDevices(std::function<bool(void *,CFStringRef, CFStringRef, AudioDeviceID)> func)
 {
     AudioObjectPropertyAddress addr = {
         kAudioHardwarePropertyDevices,
@@ -390,27 +435,284 @@ bool MacExtenalAudio::haveValidOutputDevice()
             0, NULL, &size);
     if(!checkStatus(stat))
     {
-        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
-        return false;
+        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error2 :"+std::to_string(stat));
+        return;
     }
+
     ids   = (AudioDeviceID*)malloc(size);
     count = size / sizeof(AudioDeviceID);
 
     stat = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr,
             0, NULL, &size, ids);
+    if(checkStatus(stat))
+    {
+        for (UInt32 i = 0; i < count; i++)
+            if (!coreaudioEnumDevice(func, ids[i]))
+                break;
+    }
+    free(ids);
+}
+
+bool MacExtenalAudio::coreaudioEnumDevice(std::function<bool (void *,CFStringRef, CFStringRef, AudioDeviceID)> proc, AudioDeviceID id)
+{
+    UInt32      size      = 0;
+    CFStringRef cf_name   = NULL;
+    CFStringRef cf_uid    = NULL;
+    bool        enum_next = true;
+    OSStatus    stat;
+    AudioObjectPropertyAddress addr = {
+        kAudioDevicePropertyStreams,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMaster
+    };
+
+    /* check to see if it's a mac input device */
+    AudioObjectGetPropertyDataSize(id, &addr, 0, NULL, &size);
+    if (!size)
+        return true;
+
+    size = sizeof(CFStringRef);
+
+    addr.mSelector = kAudioDevicePropertyDeviceUID;
+    stat = AudioObjectGetPropertyData(id, &addr, 0, NULL, &size, &cf_uid);
+
     if(!checkStatus(stat))
     {
-        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
+        m_obsever->onCaptureAudioLog("get audio device UID error :"+std::to_string(stat));
+        return true;
+    }
+    addr.mSelector = kAudioDevicePropertyDeviceNameCFString;
+    stat = AudioObjectGetPropertyData(id, &addr, 0, NULL, &size, &cf_name);
+    if(!checkStatus(stat))
+    {
+        m_obsever->onCaptureAudioLog("get audio device uname error :"+std::to_string(stat));
+        return true;
+    }
+    enum_next = proc(this,cf_name, cf_uid, id);
+    return enum_next;
+}
+
+bool MacExtenalAudio::findDeviceIDByUid()
+{
+    UInt32      size      = sizeof(AudioDeviceID);
+    CFStringRef cf_uid    = NULL;
+    CFStringRef qual      = NULL;
+    UInt32      qual_size = 0;
+    OSStatus    stat;
+    bool        success;
+
+    AudioObjectPropertyAddress addr = {
+        .mScope   = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMaster
+    };
+
+    if (m_device_name.empty())
+        m_device_name = std::string("classIn");
+
+    /* have to do this because mac output devices don't actually exist */
+    if (m_device_name=="classIn") {
+        {
+            if (!getDefaultOutAudioDevices()) {
+//                ca->no_devices = true;
+                return false;
+            }
+        }
+    }
+
+    cf_uid = CFStringCreateWithCString(NULL, m_device_uid.c_str(),
+            kCFStringEncodingUTF8);
+
+    if (m_default_device) {
+        addr.mSelector = PROPERTY_DEFAULT_DEVICE;
+        stat = AudioObjectGetPropertyData(kAudioObjectSystemObject,
+                &addr, qual_size, &qual, &size, &m_device_id);
+        success = (stat == noErr);
+    } else {
+        success = coreAudioGetDeviceUID();
+    }
+
+    if (cf_uid)
+        CFRelease(cf_uid);
+
+    return success;
+    return true;
+}
+
+bool MacExtenalAudio::coreAudioGetDeviceName()
+{
+    CFStringRef cf_name = NULL;
+    UInt32 size = sizeof(CFStringRef);
+//    char name[1024];
+
+    const AudioObjectPropertyAddress addr = {
+        kAudioDevicePropertyDeviceNameCFString,
+        kAudioObjectPropertyScopeInput,
+        kAudioObjectPropertyElementMaster
+    };
+
+    OSStatus stat = AudioObjectGetPropertyData(m_device_id, &addr,
+            0, NULL, &size, &cf_name);
+
+    if(!checkStatus(stat))
+    {
+        m_obsever->onCaptureAudioLog("get audio device property data error1 :"+std::to_string(stat));
         return false;
     }
 
-    for (UInt32 i = 0; i < count; i++)
-    {
-        if (!coreaudio_enum_device(proc, param, ids[i]))
-            break;
+    NSString *foo = (NSString *)cf_name;
+    std::string name = std::string([foo UTF8String]);
+//    QString name = QString::fromNSString((const NSString*)cf_name);
+
+
+//    if (!cf_to_cstr(cf_name, name, 1024)) {
+//        blog(LOG_WARNING, "[coreaudio_get_device_name] failed to "
+//                          "convert name to cstr for some reason");
+//        return false;
+//    }
+
+//    bfree(ca->device_name);
+    m_device_name = name;
+
+    if (cf_name)
+        CFRelease(cf_name);
+
+    return true;
+}
+
+bool MacExtenalAudio::coreAudioGetDeviceUID()
+{
+    enumDevices(getDeviceId);
+    return true;
+}
+
+bool MacExtenalAudio::getDefaultOutAudioDevices()
+{
+    enumDevices(coreaudioEnumAddDevices);
+
+    return true;
+}
+
+bool MacExtenalAudio::coreaudioEnumAddDevices(void *pthis,CFStringRef cf_name, CFStringRef cf_uid, AudioDeviceID id)
+{
+    MacExtenalAudio* data =  (MacExtenalAudio*)pthis;
+//	struct device_item item;
+
+//	memset(&item, 0, sizeof(item));
+
+//	if (!cf_to_dstr(cf_name, &item.name))
+//		goto fail;
+//	if (!cf_to_dstr(cf_uid,  &item.value))
+//		goto fail;
+
+//    bool isOutput = (astrstri(item.value.array, "output") == NULL);
+//    if ((data->input || !device_is_input(item.value.array)) && isOutput)
+//        device_list_add(data->list, &item);
+
+//    if (!data->input && !isOutput)
+//    {
+//        device_list_add(data->list, &item);
+//    }
+
+//fail:
+//    device_item_free(&item);
+
+//    UNUSED_PARAMETER(id);
+    return true;
+}
+
+bool MacExtenalAudio::getDeviceId(void *pthis,CFStringRef cf_name, CFStringRef cf_uid, AudioDeviceID id)
+{
+    MacExtenalAudio *that = (MacExtenalAudio*)pthis;
+    QString strUID = QString::fromNSString((NSString*)cf_name);
+    if (strUID.toStdString()== that->m_device_name) {
+        that->m_device_id = id;
+        that->m_device_uid=QString::fromNSString((NSString*)cf_uid).toStdString();
+        return false;
     }
 
+    return true;
 }
+
+//bool MacExtenalAudio::haveValidOutputDevice()
+//{
+//    AudioObjectPropertyAddress addr = {
+//        kAudioHardwarePropertyDevices,
+//        kAudioObjectPropertyScopeGlobal,
+//        kAudioObjectPropertyElementMaster
+//    };
+
+//    UInt32        size = 0;
+//    UInt32        count;
+//    OSStatus      stat;
+//    AudioDeviceID *ids;
+
+//    stat = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr,
+//            0, NULL, &size);
+//    if(!checkStatus(stat))
+//    {
+//        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
+//        return false;
+//    }
+//    ids   = (AudioDeviceID*)malloc(size);
+//    count = size / sizeof(AudioDeviceID);
+
+//    stat = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr,
+//            0, NULL, &size, ids);
+//    if(!checkStatus(stat))
+//    {
+//        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
+//        return false;
+//    }
+
+//    for (UInt32 i = 0; i < count; i++)
+//    {
+//        if (!enumAudioOutputDevice(ids[i]))
+//            break;
+//    }
+
+//}
+
+//bool MacExtenalAudio::enumAudioOutputDevice(AudioDeviceID id)
+//{
+//    UInt32      size      = 0;
+//    CFStringRef cf_name   = NULL;
+//    CFStringRef cf_uid    = NULL;
+//    bool        enum_next = true;
+//    OSStatus    stat;
+//    AudioObjectPropertyAddress addr = {
+//        kAudioDevicePropertyStreams,
+//        kAudioObjectPropertyScopeGlobal,
+//        kAudioObjectPropertyElementMaster
+//    };
+
+//    /* check to see if it's a mac input device */
+//    AudioObjectGetPropertyDataSize(id, &addr, 0, NULL, &size);
+//    if (!size)
+//        return true;
+
+//    size = sizeof(CFStringRef);
+
+//    addr.mSelector = kAudioDevicePropertyDeviceUID;
+//    stat = AudioObjectGetPropertyData(id, &addr, 0, NULL, &size, &cf_uid);
+//    if(!checkStatus(stat))
+//    {
+//        m_obsever->onCaptureAudioLog("get audio uid error2 :"+std::to_string(stat));
+//        return true;
+//    }
+//    addr.mSelector = kAudioDevicePropertyDeviceNameCFString;
+//    stat = AudioObjectGetPropertyData(id, &addr, 0, NULL, &size, &cf_name);
+//    if(!checkStatus(stat))
+//    {
+//        m_obsever->onCaptureAudioLog("get audio cname error2 :"+std::to_string(stat));
+//        return enum_next;
+//    }
+////    if (!enum_success(stat, "get audio device name"))
+////        goto fail;
+
+//    enum_next = proc(param, cf_name, cf_uid, id);
+
+//    return enum_next;
+//}
 
 //void MacExtenalAudio::audioObjectRemovePerprotyListener(AudioObjectPropertyAddress *addr, AURenderCallbackStruct clallback)
 //{
@@ -448,15 +750,15 @@ MacExtenalAudio::MacExtenalAudio(ICCExtenedAudioObserver *observer)
 bool MacExtenalAudio::initAudioCapture()
 {
     OSStatus stat;
-    if(findDeviceIDByUid())
+    if(!findDeviceIDByUid())
     {
         return false;
     }
-    if(coreAudioGetDeviceName())
+    if(!coreAudioGetDeviceName())
     {
         return false;
     }
-    if(coreAuduioInit())
+    if(!coreAudioInit())
     {
         return false;
     }
@@ -489,9 +791,25 @@ bool MacExtenalAudio::initAudioCapture()
     {
         return false;
     }
+    if(!initCoreAudioUnitCallback())
+    {
+        return false;
+    }
 
+    stat = AudioUnitInitialize(m_audio_unit);
+    if(!checkStatus(stat))
+    {
+        m_obsever->onCaptureAudioLog("audio unit init error :"+std::to_string(stat));
+        return false;
+    }
 
-
+    if(!coreAudioStart())
+    {
+        m_obsever->onCaptureAudioLog("audio unit start error...");
+        return false;
+    }
+    m_init = true;
+    return true;
 }
 
 int MacExtenalAudio::channel()
@@ -506,23 +824,23 @@ int MacExtenalAudio::sampleRate()
 
 void MacExtenalAudio::startAudioCapture()
 {
-//    m_ccADM->StartPlayout();
-    OSStatus status = AudioOutputUnitStart(m_audioUnit);
-    if(!checkStatus(status))
-    {
-//        return false;
-    }
+////    m_ccADM->StartPlayout();
+//    OSStatus status = AudioOutputUnitStart(m_audioUnit);
+//    if(!checkStatus(status))
+//    {
+////        return false;
+//    }
 
 }
 
 void MacExtenalAudio::endAudioCapture()
 {
 //    m_ccADM->StopPlayout();
-    OSStatus status = AudioOutputUnitStop(m_audioUnit);
-    if(!checkStatus(status))
-    {
-//        return false;
-    }
+//    OSStatus status = AudioOutputUnitStop(m_audioUnit);
+//    if(!checkStatus(status))
+//    {
+////        return false;
+//    }
 }
 
 void MacExtenalAudio::setAudioDataCallback(std::function<void (uint8_t *, int32_t, int32_t, int32_t)> callback)

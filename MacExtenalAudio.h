@@ -2,6 +2,8 @@
 #define MACEXTENALAUDIO_H
 #include "ICCExtenedAudio.h"
 #include "audio_device_mac.h"
+#include <CoreFoundation/CFString.h>
+#include <CoreAudio/CoreAudio.h>
 
 
 namespace CC {
@@ -41,7 +43,7 @@ public:
             UInt32 frames,
             AudioBufferList *ignored_buffers);
 
-    bool coreAuduioInit();
+    bool coreAudioInit();
     void coreAudioUninit();
     void coreAudioShutdown();
     bool coreAudioStart();
@@ -58,7 +60,26 @@ public:
     bool enableIOProperty(bool input,bool enable);
     bool formatIsValid(uint32_t format_flags,uint32_t bits);
 
-    bool haveValidOutputDevice();
+
+    void enumDevices(std::function<bool(void *,CFStringRef cf_name,
+                     CFStringRef cf_uid, AudioDeviceID id)> func);
+
+    bool coreaudioEnumDevice(std::function<bool(void *,CFStringRef cf_name,CFStringRef cf_uid, AudioDeviceID id)> proc, AudioDeviceID id);
+
+    bool findDeviceIDByUid();
+
+    bool coreAudioGetDeviceName();
+    bool coreAudioGetDeviceUID();
+
+    bool getDefaultOutAudioDevices();
+    static bool coreaudioEnumAddDevices(void *pthis,CFStringRef cf_name,
+                                 CFStringRef cf_uid, AudioDeviceID id);
+    static bool getDeviceId(void *pthis,CFStringRef cf_name, CFStringRef cf_uid,
+                                   AudioDeviceID id);
+
+
+//    bool haveValidOutputDevice();
+//    bool enumAudioOutputDevice(AudioDeviceID id);
 
 private:
     ICCExtenedAudioObserver *m_obsever=nullptr;
@@ -74,7 +95,7 @@ private:
     uint32_t m_channels;
 
     bool m_default_device;
-    bool m_active;
+    bool m_active=false;
     bool m_init;
 
 
