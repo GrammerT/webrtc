@@ -7,7 +7,6 @@
 
 namespace CC
 {
-
 	class ICCExtenedAudioObserver
 	{
 	public:

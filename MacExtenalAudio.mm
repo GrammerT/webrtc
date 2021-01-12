@@ -22,15 +22,6 @@ bool checkStatus(int status){
 }
 
 
-
-#define kOutputBus 0
-#define kInputBus 1
-
-
-#define MAX_AUDIO_MIXES     4
-#define MAX_AUDIO_CHANNELS  2
-#define AUDIO_OUTPUT_FRAMES 1024
-
 #define PROPERTY_DEFAULT_DEVICE kAudioHardwarePropertyDefaultInputDevice
 #define PROPERTY_FORMATS kAudioStreamPropertyAvailablePhysicalFormats
 
@@ -41,12 +32,12 @@ bool checkStatus(int status){
 #define BUS_OUTPUT 0
 #define BUS_INPUT  1
 
-#define MAX_DEVICES 20
-
 #define set_property AudioUnitSetProperty
 #define get_property AudioUnitGetProperty
 
-#if 1
+
+//#define OUTPUT_PCM_FILE
+#ifdef OUTPUT_PCM_FILE
 #include <stdio.h>
 #ifdef WIN32
 static FILE *g_pFile = nullptr;
@@ -54,41 +45,7 @@ static FILE *g_pFile = nullptr;
 static FILE *g_pFile = fopen("source.pcm", "wb");
 #endif
 #endif
-OSStatus MacExtenalAudio::playbackCallback(void *inRefCon,
-                                 AudioUnitRenderActionFlags *ioActionFlags,
-                                 const AudioTimeStamp *inTimeStamp,
-                                 UInt32 inBusNumber,
-                                 UInt32 inNumberFrames,
-                                 AudioBufferList *ioData) {
-    // Notes: ioData contains buffers (may be more than one!)
-    // Fill them up as much as you can. Remember to set the size value in each buffer to match how
-    // much data is in the buffer.
-    MacExtenalAudio *pThis=(MacExtenalAudio*)inRefCon;
-    pThis->m_obsever->onCaptureAudioLog("playcallback...");
-    for (int i=0; i < ioData->mNumberBuffers; i++) { // in practice we will only ever have 1 buffer, since audio format is mono
-        AudioBuffer buffer = ioData->mBuffers[i];
-        pThis->m_obsever->onCaptureAudioLog("buffer have data.channels:"+std::to_string(buffer.mNumberChannels)+",samples size:"+std::to_string(buffer.mDataByteSize));
 
-#if 1
-
-#if 0
-                    static FILE *g_pFile;
-                    if (!g_pFile)
-                    {
-                        fopen_s(&g_pFile, "e:/source.pcm", "wb");
-                    }
-#endif
-                    if (g_pFile)
-                    {
-                        fwrite((const int8_t*)buffer.mData,buffer.mDataByteSize, 1, g_pFile);
-                        fflush(g_pFile);
-                    }
-#endif
-
-    }
-
-    return noErr;
-}
 
 OSStatus MacExtenalAudio::notification_callback(AudioObjectID id, UInt32 num_addresses, const AudioObjectPropertyAddress addresses[], void *data)
 {
@@ -106,33 +63,20 @@ OSStatus MacExtenalAudio::inputCallback(void *data, AudioUnitRenderActionFlags *
 
     if(!checkStatus(stat))
     {
-
         return noErr;
     }
 
-//    if (!ca_success(stat, ca, "input_callback", "audio retrieval")){
-//        unsigned long cur_ms = clock();
-//        if (!ca->prev_update_ts || cur_ms - ca->prev_update_ts > 5000000) {
-//            blog(LOG_WARNING, "Prepare reset the coreaudio module.");
-//            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-//                blog(LOG_WARNING, "Reset the coreaudio module.");
-//                obs_data_t * settings = obs_source_get_settings(ca->source);
-//                coreaudio_update(ca, settings);
-//                obs_data_release(settings);
-//            });
-//            ca->prev_update_ts = cur_ms;
-//        }
-//        return noErr;
-//    }
-
-//    for (UInt32 i = 0; i < pThis->m_tempBufferList->mNumberBuffers; i++)
-//        audio.data[i] = pThis->m_tempBufferList->mBuffers[i].mData;
-
-//    audio.frames          = frames;
-//    audio.speakers        = ca->speakers;
-//    audio.format          = ca->format;
-//    audio.samples_per_sec = ca->sample_rate;
-//    audio.timestamp       = ts_data->mHostTime;
+    for (UInt32 i = 0; i < pThis->m_tempBufferList->mNumberBuffers; i++)
+    {
+        AudioBuffer ab= pThis->m_tempBufferList->mBuffers[i];
+#ifdef OUTPUT_PCM_FILE
+        if (g_pFile)
+        {
+            fwrite((const uint8_t*)ab.mData,ab.mDataByteSize, 1, g_pFile);
+            fflush(g_pFile);
+        }
+#endif
+    }
 
     return noErr;
 }
@@ -156,8 +100,6 @@ bool MacExtenalAudio::coreAudioInit()
         m_obsever->onCaptureAudioLog("AudioComponentInstanceNew error :"+std::to_string(stat));
         return false;
     }
-
-
     return true;
 }
 
@@ -184,14 +126,16 @@ bool MacExtenalAudio::coreAudioStart()
     return m_active;
 }
 
-void MacExtenalAudio::coreAudioStop()
+bool MacExtenalAudio::coreAudioStop()
 {
     OSStatus stat;
     stat = AudioOutputUnitStop(m_audio_unit);
     if(!checkStatus(stat))
     {
         m_obsever->onCaptureAudioLog("auduio out put unit stop error :"+std::to_string(stat));
+        return false;
     }
+    return true;
 }
 
 bool MacExtenalAudio::initAudioUnitFormat()
@@ -206,20 +150,19 @@ bool MacExtenalAudio::initAudioUnitFormat()
         m_obsever->onCaptureAudioLog("auduio out put unit get stream format error :"+std::to_string(stat));
         return false;
     }
-//    if (desc.mChannelsPerFrame > 8)
+
+    if (desc.mChannelsPerFrame > 8)
     {
-
-            desc.mSampleRate=48000;
-
-            desc.mChannelsPerFrame = 2;
-            desc.mBytesPerFrame = 2 * desc.mBitsPerChannel / 8;
-            desc.mBytesPerPacket =
-                    desc.mFramesPerPacket * desc.mBytesPerFrame;
+        desc.mSampleRate = 48000;
+        desc.mChannelsPerFrame = 2;
+        desc.mBytesPerFrame = 2 * desc.mBitsPerChannel / 8;
+        desc.mBytesPerPacket =
+                desc.mFramesPerPacket * desc.mBytesPerFrame;
     }
 
     stat = set_property(m_audio_unit, kAudioUnitProperty_StreamFormat,
             SCOPE_OUTPUT, BUS_INPUT, &desc, size);
-    if(!checkStatus(stat))
+    if(!checkStatus(stat))//！maybe kAudioUnitErr_FormatNotSupported
     {
         m_obsever->onCaptureAudioLog("auduio out put unit set stream format error :"+std::to_string(stat));
         return false;
@@ -234,11 +177,8 @@ bool MacExtenalAudio::initAudioUnitFormat()
         m_obsever->onCaptureAudioLog("format is not valid.");
         return false;
     }
-
     m_sample_rate=desc.mSampleRate;
     m_channels=2;
-
-
     return true;
 }
 
@@ -397,24 +337,7 @@ bool MacExtenalAudio::enableIOProperty(bool input, bool enable)
 
 bool MacExtenalAudio::formatIsValid(uint32_t format_flags, uint32_t bits)
 {
-//    bool planar = (format_flags & kAudioFormatFlagIsNonInterleaved) != 0;
 
-//    if (format_flags & kAudioFormatFlagIsFloat)
-//        return planar ? AUDIO_FORMAT_FLOAT_PLANAR : AUDIO_FORMAT_FLOAT;
-
-//    if (!(format_flags & kAudioFormatFlagIsSignedInteger) && bits == 8)
-//        return planar ? AUDIO_FORMAT_U8BIT_PLANAR : AUDIO_FORMAT_U8BIT;
-
-//    /* not float?  not signed int?  no clue, fail */
-//    if ((format_flags & kAudioFormatFlagIsSignedInteger) == 0)
-//        return AUDIO_FORMAT_UNKNOWN;
-
-//    if (bits == 16)
-//        return planar ? AUDIO_FORMAT_16BIT_PLANAR : AUDIO_FORMAT_16BIT;
-//    else if (bits == 32)
-//        return planar ? AUDIO_FORMAT_32BIT_PLANAR : AUDIO_FORMAT_32BIT;
-
-//    return AUDIO_FORMAT_UNKNOWN;
     return true;
 }
 
@@ -513,11 +436,13 @@ bool MacExtenalAudio::findDeviceIDByUid()
     if (m_device_name=="classIn") {
         {
             if (!getDefaultOutAudioDevices()) {
-//                ca->no_devices = true;
+
                 return false;
             }
         }
     }
+
+    m_device_uid=m_soundfloweruids.front();
 
     cf_uid = CFStringCreateWithCString(NULL, m_device_uid.c_str(),
             kCFStringEncodingUTF8);
@@ -542,7 +467,6 @@ bool MacExtenalAudio::coreAudioGetDeviceName()
 {
     CFStringRef cf_name = NULL;
     UInt32 size = sizeof(CFStringRef);
-//    char name[1024];
 
     const AudioObjectPropertyAddress addr = {
         kAudioDevicePropertyDeviceNameCFString,
@@ -561,16 +485,7 @@ bool MacExtenalAudio::coreAudioGetDeviceName()
 
     NSString *foo = (NSString *)cf_name;
     std::string name = std::string([foo UTF8String]);
-//    QString name = QString::fromNSString((const NSString*)cf_name);
 
-
-//    if (!cf_to_cstr(cf_name, name, 1024)) {
-//        blog(LOG_WARNING, "[coreaudio_get_device_name] failed to "
-//                          "convert name to cstr for some reason");
-//        return false;
-//    }
-
-//    bfree(ca->device_name);
     m_device_name = name;
 
     if (cf_name)
@@ -592,132 +507,40 @@ bool MacExtenalAudio::getDefaultOutAudioDevices()
     return true;
 }
 
+
+bool isSoundflower(CFStringRef name)
+{
+    NSString *deviceName = (NSString*)name;
+    return [deviceName hasPrefix:@"Soundflower"];
+}
+
 bool MacExtenalAudio::coreaudioEnumAddDevices(void *pthis,CFStringRef cf_name, CFStringRef cf_uid, AudioDeviceID id)
 {
     MacExtenalAudio* data =  (MacExtenalAudio*)pthis;
-//	struct device_item item;
 
-//	memset(&item, 0, sizeof(item));
-
-//	if (!cf_to_dstr(cf_name, &item.name))
-//		goto fail;
-//	if (!cf_to_dstr(cf_uid,  &item.value))
-//		goto fail;
-
-//    bool isOutput = (astrstri(item.value.array, "output") == NULL);
-//    if ((data->input || !device_is_input(item.value.array)) && isOutput)
-//        device_list_add(data->list, &item);
-
-//    if (!data->input && !isOutput)
-//    {
-//        device_list_add(data->list, &item);
-//    }
-
-//fail:
-//    device_item_free(&item);
-
-//    UNUSED_PARAMETER(id);
+    if(isSoundflower(cf_name))
+    {
+        NSString *foo = (NSString *)cf_uid;
+        std::string uid = std::string([foo UTF8String]);
+        data->m_soundfloweruids.push_back(uid);
+    }
     return true;
 }
 
 bool MacExtenalAudio::getDeviceId(void *pthis,CFStringRef cf_name, CFStringRef cf_uid, AudioDeviceID id)
 {
     MacExtenalAudio *that = (MacExtenalAudio*)pthis;
-    QString strUID = QString::fromNSString((NSString*)cf_name);
-    if (strUID.toStdString()== that->m_device_name) {
+    QString strUID = QString::fromNSString((NSString*)cf_uid);
+    if (strUID.toStdString()== that->m_device_uid) {
         that->m_device_id = id;
-        that->m_device_uid=QString::fromNSString((NSString*)cf_uid).toStdString();
+        that->m_device_name=QString::fromNSString((NSString*)cf_name).toStdString();
         return false;
     }
 
     return true;
 }
 
-//bool MacExtenalAudio::haveValidOutputDevice()
-//{
-//    AudioObjectPropertyAddress addr = {
-//        kAudioHardwarePropertyDevices,
-//        kAudioObjectPropertyScopeGlobal,
-//        kAudioObjectPropertyElementMaster
-//    };
 
-//    UInt32        size = 0;
-//    UInt32        count;
-//    OSStatus      stat;
-//    AudioDeviceID *ids;
-
-//    stat = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr,
-//            0, NULL, &size);
-//    if(!checkStatus(stat))
-//    {
-//        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
-//        return false;
-//    }
-//    ids   = (AudioDeviceID*)malloc(size);
-//    count = size / sizeof(AudioDeviceID);
-
-//    stat = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr,
-//            0, NULL, &size, ids);
-//    if(!checkStatus(stat))
-//    {
-//        m_obsever->onCaptureAudioLog("get kAudioObjectSystemObject data size error :"+std::to_string(stat));
-//        return false;
-//    }
-
-//    for (UInt32 i = 0; i < count; i++)
-//    {
-//        if (!enumAudioOutputDevice(ids[i]))
-//            break;
-//    }
-
-//}
-
-//bool MacExtenalAudio::enumAudioOutputDevice(AudioDeviceID id)
-//{
-//    UInt32      size      = 0;
-//    CFStringRef cf_name   = NULL;
-//    CFStringRef cf_uid    = NULL;
-//    bool        enum_next = true;
-//    OSStatus    stat;
-//    AudioObjectPropertyAddress addr = {
-//        kAudioDevicePropertyStreams,
-//        kAudioObjectPropertyScopeGlobal,
-//        kAudioObjectPropertyElementMaster
-//    };
-
-//    /* check to see if it's a mac input device */
-//    AudioObjectGetPropertyDataSize(id, &addr, 0, NULL, &size);
-//    if (!size)
-//        return true;
-
-//    size = sizeof(CFStringRef);
-
-//    addr.mSelector = kAudioDevicePropertyDeviceUID;
-//    stat = AudioObjectGetPropertyData(id, &addr, 0, NULL, &size, &cf_uid);
-//    if(!checkStatus(stat))
-//    {
-//        m_obsever->onCaptureAudioLog("get audio uid error2 :"+std::to_string(stat));
-//        return true;
-//    }
-//    addr.mSelector = kAudioDevicePropertyDeviceNameCFString;
-//    stat = AudioObjectGetPropertyData(id, &addr, 0, NULL, &size, &cf_name);
-//    if(!checkStatus(stat))
-//    {
-//        m_obsever->onCaptureAudioLog("get audio cname error2 :"+std::to_string(stat));
-//        return enum_next;
-//    }
-////    if (!enum_success(stat, "get audio device name"))
-////        goto fail;
-
-//    enum_next = proc(param, cf_name, cf_uid, id);
-
-//    return enum_next;
-//}
-
-//void MacExtenalAudio::audioObjectRemovePerprotyListener(AudioObjectPropertyAddress *addr, AURenderCallbackStruct clallback)
-//{
-
-//}
 
 void MacExtenalAudio::coreAudioUninit()
 {
@@ -735,7 +558,8 @@ void MacExtenalAudio::coreAudioUninit()
         m_obsever->onCaptureAudioLog("auduio component instance dispose :"+std::to_string(stat));
     }
     m_audio_unit = NULL;
-//    free(m_tempBuffer);
+    free(m_tempBufferList);
+    m_tempBufferList=nullptr;
 }
 
 
@@ -743,8 +567,11 @@ void MacExtenalAudio::coreAudioUninit()
 MacExtenalAudio::MacExtenalAudio(ICCExtenedAudioObserver *observer)
     :m_obsever(observer)
 {
-//    m_ccADM = std::make_shared<CC::AudioDeviceMac>();
-//    m_ccADM->setObserver(m_obsever);
+}
+
+MacExtenalAudio::~MacExtenalAudio()
+{
+    coreAudioShutdown();
 }
 
 bool MacExtenalAudio::initAudioCapture()
@@ -803,49 +630,41 @@ bool MacExtenalAudio::initAudioCapture()
         return false;
     }
 
-    if(!coreAudioStart())
-    {
-        m_obsever->onCaptureAudioLog("audio unit start error...");
-        return false;
-    }
+
     m_init = true;
     return true;
 }
 
 int MacExtenalAudio::channel()
 {
-    return m_ccADM->playoutChannels();
+//    return m_ccADM->playoutChannels();
+    return this->m_channels;
 }
 
 int MacExtenalAudio::sampleRate()
 {
-    return m_ccADM->playoutSampleRate();
+    return this->m_sample_rate;
 }
 
 void MacExtenalAudio::startAudioCapture()
 {
-////    m_ccADM->StartPlayout();
-//    OSStatus status = AudioOutputUnitStart(m_audioUnit);
-//    if(!checkStatus(status))
-//    {
-////        return false;
-//    }
-
+    if(!coreAudioStart())
+    {
+        m_obsever->onCaptureAudioLog("audio unit start error...");
+    }
 }
 
 void MacExtenalAudio::endAudioCapture()
 {
-//    m_ccADM->StopPlayout();
-//    OSStatus status = AudioOutputUnitStop(m_audioUnit);
-//    if(!checkStatus(status))
-//    {
-////        return false;
-//    }
+    if(!coreAudioStop())
+    {
+        m_obsever->onCaptureAudioLog("audio capture stop error");
+    }
 }
 
 void MacExtenalAudio::setAudioDataCallback(std::function<void (uint8_t *, int32_t, int32_t, int32_t)> callback)
 {
-
+    m_data_callback=callback;
 }
 
 }

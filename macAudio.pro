@@ -18,20 +18,14 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
     ICCExtenedAudio.cpp \
     MacExtenalAudio.mm \
-    audio_device_mac.cpp \
-    audio_mixer_manager_mac.cc \
     main.cpp \
-    mainwindow.cpp \
-    pa_ringbuffer.c
+    mainwindow.cpp
 
 HEADERS += \
     ICCExtenedAudio.h \
     MacExtenalAudio.h \
-    audio_device_mac.h \
-    audio_mixer_manager_mac.h \
     mainwindow.h \
-    pa_memorybarrier.h \
-    pa_ringbuffer.h
+    pa_memorybarrier.h
 
 FORMS += \
     mainwindow.ui
@@ -40,6 +34,11 @@ LIBS += -framework AudioToolBox
 LIBS += -framework CoreAudio
 LIBS += -framework CoreFoundation
 LIBS += -framework Foundation
+
+
+
+QMAKE_INFO_PLIST = Info.plist
+
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin

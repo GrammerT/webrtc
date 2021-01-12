@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>macCapture</string>
+	<key>CFBundleGetInfoString</key>
+	<string>OBS - Free and Open Source Streaming/Recording Software</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.obsproject.obs-studio</string>
+	<key>CFBundleName</key>
+	<string>macCapture</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSAppNapIsDisabled</key>
+	<true/>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.8.5</string>
+	<key>NSCameraUsageDescription</key>
+	<string>OBS needs to access the camera to enable camera sources to work.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OBS needs to access the microphone to enable audio input.</string>
+	<key>OBSFeedsURL</key>
+	<string>https://obsproject.com/osx_update/feeds.xml</string>
+	<key>SUFeedURL</key>
+	<string>https://obsproject.com/osx_update/stable/updates.xml</string>
+	<key>SUPublicDSAKeyFile</key>
+	<string>OBSPublicDSAKey.pem</string>
+</dict>
+</plist>
