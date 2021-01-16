@@ -6,6 +6,9 @@
 #include <CoreAudio/CoreAudio.h>
 #include <vector>
 
+
+struct SwrContext;
+
 namespace CC {
 
 class MacExtenalAudio:public ICCExtenedAudio
@@ -57,6 +60,10 @@ private:
 
     bool coreaudioEnumDevice(std::function<bool(void *,CFStringRef cf_name,CFStringRef cf_uid, AudioDeviceID id)> proc,
                              AudioDeviceID id);
+
+    bool initResampleContext();
+
+
     bool findDeviceIDByUid();
     bool coreAudioGetDeviceName();
     bool coreAudioGetDeviceUID();
@@ -78,10 +85,19 @@ private:
     AudioUnit m_audio_unit=nullptr;
     AudioDeviceID m_device_id;
 
+    uint32_t m_byte_per_frame;
     uint32_t m_sample_rate;
     uint32_t m_channels;
 
+
+    int m_dst_nb_samples;
+    uint32_t m_want_byte_per_frame=2;
+    uint32_t m_want_sample_rate=48000;
+    uint32_t m_want_channels = 2;
+
     std::function<void (uint8_t *, int32_t, int32_t, int32_t)> m_data_callback=nullptr;
+
+    struct SwrContext* m_swr_ctx ;
 
     bool m_default_device=false;
     bool m_active=false;

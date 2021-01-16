@@ -3,6 +3,14 @@
 #include <CoreAudio/AudioHardware.h>
 #include <QString>
 
+extern "C"
+{
+
+#include <libavutil/opt.h>
+#include "libswscale/swscale.h"
+#include "libswresample/swresample.h"
+}
+
 
 namespace CC{
 #define OBSERVER_LOG(str)                                       \
@@ -36,13 +44,14 @@ bool checkStatus(int status){
 #define get_property AudioUnitGetProperty
 
 
-//#define OUTPUT_PCM_FILE
+#define OUTPUT_PCM_FILE
 #ifdef OUTPUT_PCM_FILE
 #include <stdio.h>
 #ifdef WIN32
 static FILE *g_pFile = nullptr;
 #else
 static FILE *g_pFile = fopen("source.pcm", "wb");
+static FILE *g_pFile1 = fopen("beforesource.pcm", "wb");
 #endif
 #endif
 
@@ -69,13 +78,64 @@ OSStatus MacExtenalAudio::inputCallback(void *data, AudioUnitRenderActionFlags *
     for (UInt32 i = 0; i < pThis->m_tempBufferList->mNumberBuffers; i++)
     {
         AudioBuffer ab= pThis->m_tempBufferList->mBuffers[i];
+        uint8_t **dst_data = NULL;
+        int dst_linesize;
+
+        /* buffer is going to be directly written to a rawaudio file, no alignment */
+        int dst_nb_samples;
+         dst_nb_samples =
+                av_rescale_rnd(frames, pThis->m_want_sample_rate, pThis->m_sample_rate, AV_ROUND_UP);
+        static int max_dst_nb_samples = dst_nb_samples;
+        int ret = av_samples_alloc_array_and_samples(&dst_data, &dst_linesize, pThis->m_want_channels,
+            dst_nb_samples, AV_SAMPLE_FMT_S16, 0);
+        if (ret<0)
+        {
+            pThis->m_obsever->onCaptureAudioLog("sample alloc array and sample error.");
+            return noErr;
+        }
+
+        dst_nb_samples = av_rescale_rnd(swr_get_delay(pThis->m_swr_ctx, pThis->m_sample_rate) +
+                                          frames, pThis->m_want_sample_rate, pThis->m_sample_rate, AV_ROUND_UP);
+        pThis->m_obsever->onCaptureAudioLog("get des samples : "+std::to_string(dst_nb_samples)+" src frames : "+std::to_string(frames));
+        if (dst_nb_samples > max_dst_nb_samples) {
+            av_freep(&dst_data[0]);
+            int ret = av_samples_alloc(dst_data, &dst_linesize, pThis->m_want_channels,
+                dst_nb_samples, AV_SAMPLE_FMT_S16, 1);
+            if (ret < 0)
+                break;
+            max_dst_nb_samples = dst_nb_samples;
+        }
+//#ifdef OUTPUT_PCM_FILE
+//        if (g_pFile1)
+//        {
+//            fwrite(ab.mData,ab.mDataByteSize, 1, g_pFile1);
+//            fflush(g_pFile1);
+//        }
+//#endif
+        int convertRet = swr_convert(pThis->m_swr_ctx,dst_data,dst_nb_samples,
+                                    (const uint8_t**)&ab.mData,frames);
+        if(convertRet<0)
+        {
+            pThis->m_obsever->onCaptureAudioLog("convert audio data error.");
+            return noErr;
+        }
+        int dst_bufsize = av_samples_get_buffer_size(&dst_linesize, pThis->m_want_channels,
+                                                         convertRet, AV_SAMPLE_FMT_S16, 1);
+        pThis->m_obsever->onCaptureAudioLog("buf size :" +std::to_string(dst_bufsize));
+
+        if(pThis->m_data_callback)
+        {
+            // sample_num,int32_t channels,int32_t byte_per_sample
+            pThis->m_data_callback(dst_data[0],dst_nb_samples,pThis->m_want_channels,2);
+        }
 #ifdef OUTPUT_PCM_FILE
         if (g_pFile)
         {
-            fwrite((const uint8_t*)ab.mData,ab.mDataByteSize, 1, g_pFile);
+            fwrite(dst_data[0],dst_bufsize, 1, g_pFile);
             fflush(g_pFile);
         }
 #endif
+        av_freep(&dst_data[0]);
     }
 
     return noErr;
@@ -177,8 +237,19 @@ bool MacExtenalAudio::initAudioUnitFormat()
         m_obsever->onCaptureAudioLog("format is not valid.");
         return false;
     }
+    m_byte_per_frame = desc.mBytesPerFrame;
     m_sample_rate=desc.mSampleRate;
-    m_channels=2;
+    m_channels=desc.mChannelsPerFrame;
+
+    if(!initResampleContext())
+    {
+        OBSERVER_LOG("resample audio context is not create.");
+        return false;
+    }
+
+
+
+
     return true;
 }
 
@@ -415,6 +486,34 @@ bool MacExtenalAudio::coreaudioEnumDevice(std::function<bool (void *,CFStringRef
     return enum_next;
 }
 
+bool MacExtenalAudio::initResampleContext()
+{
+    m_swr_ctx = swr_alloc();
+    if(!m_swr_ctx)
+    {
+        OBSERVER_LOG("resample audio context is not create.");
+        return false;
+    }
+
+//    AV_SAMPLE_FMT_DBL
+    // set options
+    av_opt_set_int(m_swr_ctx, "in_channel_layout",    m_channels, 0);
+    av_opt_set_int(m_swr_ctx, "in_sample_rate",       m_sample_rate, 0);
+    av_opt_set_sample_fmt(m_swr_ctx, "in_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
+
+    av_opt_set_int(m_swr_ctx, "out_channel_layout",    m_want_channels, 0);
+    av_opt_set_int(m_swr_ctx, "out_sample_rate",       m_want_sample_rate, 0);
+    av_opt_set_sample_fmt(m_swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
+
+
+    // initialize the resampling context
+    if (swr_init(m_swr_ctx) < 0) {
+        OBSERVER_LOG("resample context init error..");
+        return false;
+    }
+    return true;
+}
+
 bool MacExtenalAudio::findDeviceIDByUid()
 {
     UInt32      size      = sizeof(AudioDeviceID);
@@ -576,6 +675,7 @@ MacExtenalAudio::~MacExtenalAudio()
 
 bool MacExtenalAudio::initAudioCapture()
 {
+
     OSStatus stat;
     if(!findDeviceIDByUid())
     {
