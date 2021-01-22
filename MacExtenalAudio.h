@@ -11,6 +11,20 @@ struct SwrContext;
 
 namespace CC {
 
+enum audio_format {
+    AUDIO_FORMAT_UNKNOWN,
+
+    AUDIO_FORMAT_U8BIT,
+    AUDIO_FORMAT_16BIT,
+    AUDIO_FORMAT_32BIT,
+    AUDIO_FORMAT_FLOAT,
+
+    AUDIO_FORMAT_U8BIT_PLANAR,
+    AUDIO_FORMAT_16BIT_PLANAR,
+    AUDIO_FORMAT_32BIT_PLANAR,
+    AUDIO_FORMAT_FLOAT_PLANAR,
+};
+
 class MacExtenalAudio:public ICCExtenedAudio
 {
 public:
@@ -73,6 +87,29 @@ private:
                                  CFStringRef cf_uid, AudioDeviceID id);
     static bool getDeviceId(void *pthis,CFStringRef cf_name, CFStringRef cf_uid,
                                    AudioDeviceID id);
+
+    static inline enum audio_format convert_ca_format(UInt32 format_flags,
+                              UInt32 bits)
+    {
+        bool planar = (format_flags & kAudioFormatFlagIsNonInterleaved) != 0;
+
+        if (format_flags & kAudioFormatFlagIsFloat)
+            return planar ? AUDIO_FORMAT_FLOAT_PLANAR : AUDIO_FORMAT_FLOAT;
+
+        if (!(format_flags & kAudioFormatFlagIsSignedInteger) && bits == 8)
+            return planar ? AUDIO_FORMAT_U8BIT_PLANAR : AUDIO_FORMAT_U8BIT;
+
+        /* not float?  not signed int?  no clue, fail */
+        if ((format_flags & kAudioFormatFlagIsSignedInteger) == 0)
+            return AUDIO_FORMAT_UNKNOWN;
+
+        if (bits == 16)
+            return planar ? AUDIO_FORMAT_16BIT_PLANAR : AUDIO_FORMAT_16BIT;
+        else if (bits == 32)
+            return planar ? AUDIO_FORMAT_32BIT_PLANAR : AUDIO_FORMAT_32BIT;
+
+        return AUDIO_FORMAT_UNKNOWN;
+    }
 
 private:
     ICCExtenedAudioObserver *m_obsever=nullptr;

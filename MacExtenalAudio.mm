@@ -237,6 +237,9 @@ bool MacExtenalAudio::initAudioUnitFormat()
         m_obsever->onCaptureAudioLog("format is not valid.");
         return false;
     }
+
+    int srcformat = convert_ca_format(desc.mFormatFlags, desc.mBitsPerChannel);
+
     m_byte_per_frame = desc.mBytesPerFrame;
     m_sample_rate=desc.mSampleRate;
     m_channels=desc.mChannelsPerFrame;
@@ -497,11 +500,11 @@ bool MacExtenalAudio::initResampleContext()
 
 //    AV_SAMPLE_FMT_DBL
     // set options
-    av_opt_set_int(m_swr_ctx, "in_channel_layout",    m_channels, 0);
+    av_opt_set_int(m_swr_ctx, "in_channel_layout",    3, 0);
     av_opt_set_int(m_swr_ctx, "in_sample_rate",       m_sample_rate, 0);
     av_opt_set_sample_fmt(m_swr_ctx, "in_sample_fmt", AV_SAMPLE_FMT_FLT, 0);
 
-    av_opt_set_int(m_swr_ctx, "out_channel_layout",    m_want_channels, 0);
+    av_opt_set_int(m_swr_ctx, "out_channel_layout",    3, 0);
     av_opt_set_int(m_swr_ctx, "out_sample_rate",       m_want_sample_rate, 0);
     av_opt_set_sample_fmt(m_swr_ctx, "out_sample_fmt", AV_SAMPLE_FMT_S16, 0);
 
